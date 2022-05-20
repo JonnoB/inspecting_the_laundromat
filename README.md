@@ -1,7 +1,7 @@
 # Inspecting the laundromat
 
 This repo contains the analysis code from the paper. 'Inspecting the laundromat: Mapping and characterising offshore owned domestic property in London'.
-The repo is related to the [enhance_ocod](https://github.com/JonnoB/enhance_ocod) repo which created the enhanced_`ocod_dataset.csv` used in this project.
+The repo is related to the [enhance_ocod](https://github.com/JonnoB/enhance_ocod) repo which created the `enhanced_ocod_dataset.csv` used in this project.
 
 # Data
 
