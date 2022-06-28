@@ -26,8 +26,8 @@ if(length(new.packages)) install.packages(new.packages)
 
 lapply(packages, library, character.only = TRUE)
 
-basewd <- "/home/jonno/empty_homes_london/empty_homes_data"
-basecd <- "/home/jonno/empty_homes_london"
+basewd <- "/home/jonno/inspecting_the_laundromat/data"
+basecd <- "/home/jonno/inspecting_the_laundromat"
 
 list.files(file.path(basecd, "functions"), full.names = T) %>%
   walk(~source(.x))
@@ -52,7 +52,7 @@ postcodes_df <- read_csv(unz(file.path(basewd, "ONSPD.zip"), "Data/ONSPD_NOV_202
     select(Postcode = pcd, LSOA11CD = lsoa11, MSOA11CD = msoa11, LAD11CD = oslaua, imd_rank = imd) %>%
   mutate(Postcode = gsub(" ", "", Postcode)) %>%
   #add on the names of the local authorities for ease of understanding
-  left_join(read_csv(unz(file.path(basewd, "ONSPD_NOV_2021_UK.zip"), "Documents/LA_UA names and codes UK as at 04_21.csv")) %>%
+  left_join(read_csv(unz(file.path(basewd, "ONSPD.zip"), "Documents/LA_UA names and codes UK as at 04_21.csv")) %>%
   select(LAD11CD = LAD21CD, LAD11NM = LAD21NM))
 
 
@@ -535,17 +535,30 @@ As previously the properties used are all classed as domestic.
 
 ```{r}
 
-offshore_df_nested <- read_csv(file.path(basewd, "ocod_lsoa_by_nested_type.csv")) %>%
-  select(-1) %>%
-  rename(offshore = '0') %>%
-  rename(LSOA11CD = lsoa11cd) %>%
-  filter(class2 == "domestic") %>%
-  select(LSOA11CD, offshore, nested = within_larger_title) %>%
-  mutate(nested = ifelse(nested, "nested", "normal")) %>%
-  group_by(LSOA11CD, nested) %>%
-  summarise(offshore = sum(offshore)) %>%
-  pivot_wider(id_cols = LSOA11CD, names_from = nested, values_from = offshore, values_fill = 0) %>%
-  ungroup
+offshore_df_nested <- read_csv(file.path(basewd, "enhanced_ocod_dataset.csv")) %>% 
+  filter(region =="GREATER LONDON",
+         class2 =="domestic",
+         !is.na(lsoa11cd)) %>%
+  group_by( nested_title, lsoa11cd) %>%
+  summarise(counts = n()) %>%
+  mutate(nested_title = ifelse(nested_title, "nested", "individual")) %>%
+  pivot_wider(id_cols = lsoa11cd, names_from = nested_title, values_from = counts, values_fill = 0) %>%
+  ungroup %>%
+  rename(LSOA11CD = lsoa11cd)
+  
+
+# 
+# offshore_df_nested <- read_csv(file.path(basewd, "ocod_lsoa_by_nested_type.csv")) %>%
+#   select(-1) %>%
+#   rename(offshore = '0') %>%
+#   rename(LSOA11CD = lsoa11cd) %>%
+#   filter(class2 == "domestic") %>%
+#   select(LSOA11CD, offshore, nested = within_larger_title) %>%
+#   mutate(nested = ifelse(nested, "nested", "normal")) %>%
+#   group_by(LSOA11CD, nested) %>%
+#   summarise(offshore = sum(offshore)) %>%
+#   pivot_wider(id_cols = LSOA11CD, names_from = nested, values_from = offshore, values_fill = 0) %>%
+#   ungroup
 
 
 all_variables_nested <-postcodes_df %>% select(LSOA11CD, MSOA11CD, LAD11CD, LAD11NM, imd_rank) %>% 
@@ -561,18 +574,18 @@ all_variables_nested <-postcodes_df %>% select(LSOA11CD, MSOA11CD, LAD11CD, LAD1
 mutate_if(is.numeric,coalesce,0) %>%
   #there are a few straggler LSOA with no homes I don't know why but the number is small so I will ignore it
   #These are removed to not cause issues in the analysis
-  mutate(homes = normal + nested) %>%
+  mutate(homes = individual + nested) %>%
   filter(homes != 0) 
 
 all_variables_nested_lad <- all_variables_nested %>%
   group_by(LAD11CD) %>%
   summarise(homes = sum(homes),
             nested = sum(nested),
-            normal = sum(normal)) %>%
+            individual = sum(individual)) %>%
   left_join(postcodes_df %>% select(LAD11CD, LAD11NM) %>% distinct())
 
 
-all_vars_monte_nested <- c("nested") %>% map(~{
+all_vars_monte_nested <- c("nested", "individual") %>% map(~{
   
   file_path <- file.path(basewd, "samples_by_type", paste0(.x, ".csv"))
   
@@ -608,10 +621,10 @@ all_vars_monte_nested_df <- all_vars_monte_nested %>%
   select(1, 2:5) %>%
   pivot_longer(., cols = 2:4) %>%
   filter(name =="non_target")) %>%
-  mutate(name = ifelse(name =="non_target", "normal", name)) %>%
+  mutate(name = ifelse(name =="non_target", "individual", name)) %>%
   left_join(all_variables_nested_lad %>% ungroup %>%
   rename(total = homes) %>%
-  pivot_longer(cols = c( normal, nested, total), values_to = "counts")
+  pivot_longer(cols = c( individual, nested, total), values_to = "counts")
 ) %>%
   mutate(total_value = counts *value) %>%
   group_by(id, name) %>%
@@ -634,7 +647,7 @@ all_vars_monte_nested_df %>%
 ```{r}
 
 
-entropy_nested <- c("nested", "normal") %>%
+entropy_nested <- c("nested", "individual") %>%
   map_df(~{
     
     tibble(type = .x, bits = entropy_val(all_variables_nested[[.x]]))
@@ -653,7 +666,7 @@ entropy_nested
   filter(msoa11cd %in% postcodes_df$MSOA11CD) 
 
   MSOAshape_nested <- MSOAshape_nested %>%
-  left_join(c("normal", "nested") %>%
+  left_join(c("individual", "nested") %>%
   map_df(~{
     
     tibble(msoa11cd = MSOAshape_nested$msoa11cd, name = .x)
@@ -665,19 +678,19 @@ entropy_nested
   #Population estimates may be out of date. Newham has more offshore properties than homes.
 MSOAshape_nested <- all_variables_nested %>% 
   group_by(MSOA11CD) %>%
-  summarise(across(.cols = c(homes, low_use, normal, nested), .fns = sum)) %>%
+  summarise(across(.cols = c(homes, low_use, individual, nested), .fns = sum)) %>%
               # mutate(low_use = (low_use/homes)) %>%
               #        offshore = (offshore/sum(offshore)) ,
               #        airbnb = (airbnb/sum(airbnb))) %>%
-  select(msoa11cd = MSOA11CD, homes, low_use, normal, nested) %>%
-  pivot_longer(., cols = c(homes, nested, normal)) %>%
+  select(msoa11cd = MSOA11CD, homes, low_use, individual, nested) %>%
+  pivot_longer(., cols = c(homes, nested, individual)) %>%
   full_join(MSOAshape_nested, .) 
 }
 
 
 
 
-morans_df_nested <-c("normal", "nested") %>%
+morans_df_nested <-c("individual", "nested") %>%
   map_df(~{
     
     target_df <- MSOAshape_nested %>% filter(name == .x) %>%
@@ -709,7 +722,7 @@ MSOAshapedata <- file.path(basewd, "Middle_Layer_Super_Output_Areas_December_201
   filter(msoa11cd %in% postcodes_df$MSOA11CD) 
 
   MSOAshape_nested <- MSOAshape_nested %>%
-  left_join(c("normal", "nested") %>%
+  left_join(c("individual", "nested") %>%
   map_df(~{
     
     tibble(msoa11cd = MSOAshape_nested$msoa11cd, name = .x)
@@ -721,9 +734,9 @@ MSOAshapedata <- file.path(basewd, "Middle_Layer_Super_Output_Areas_December_201
   #Population estimates may be out of date. Newham has more offshore properties than homes.
 MSOAshape_nested <- all_variables_nested %>% 
   group_by(MSOA11CD) %>%
-  summarise(across(.cols = c(normal, nested), .fns = sum)) %>%
-  select(msoa11cd = MSOA11CD, normal, nested) %>%
-  pivot_longer(., cols =c(normal, nested)) %>%
+  summarise(across(.cols = c(individual, nested), .fns = sum)) %>%
+  select(msoa11cd = MSOA11CD, individual, nested) %>%
+  pivot_longer(., cols =c(individual, nested)) %>%
   full_join(MSOAshape_nested, .) %>%
   group_by(name) %>%
   mutate(
@@ -742,7 +755,7 @@ ggplot() +
    geom_sf(aes(fill = value3),  colour = NA, lwd = 0, pch = 0) +
   facet_wrap(facets = ~name) +
   scale_fill_viridis_c() +
-  labs(title = "Nested vs normal offshore domestic property", 
+  labs(title = "Nested vs individual offshore domestic property", 
        fill = "log10(P)")
 ggsave(file.path(Figures, "property_maps_nested.pdf"))
 ```
@@ -792,7 +805,7 @@ The nested addresses are substantially cheaper and more concentrated than the no
 offshore_df_price <- read_csv(file.path(basewd, "enhanced_ocod_dataset.csv")) %>%
   filter(region =="GREATER LONDON",
          class2 =="domestic",
-         within_larger_title == FALSE) %>%
+         nested_title == FALSE) %>%
   select(title_number, tenure, tenure:district, price_paid, property_address)
 
 #how many have a price?
@@ -811,6 +824,176 @@ offshore_df_price <- read_csv(file.path(basewd, "enhanced_ocod_dataset.csv"))
 table(offshore_df_price$class2)
 ```
 
+#Country of incorporation
+
+```{r}
+
+offshore_df_price <- read_csv(file.path(basewd, "enhanced_ocod_dataset.csv")) 
+
+{
+original_ocod <- read_csv(file.path(basewd, "OCOD.csv"), name_repair = "universal") 
+names(original_ocod) <- names(original_ocod) %>% tolower()
+original_ocod <- original_ocod  %>% select("title.number" ,"country.incorporated..1.","country.incorporated..2.", "country.incorporated..3.", "country.incorporated..4." )
+}
+
+ctry_incorp <- offshore_df_price %>% 
+  filter(region =="GREATER LONDON",
+         class2 =="domestic") %>%
+  select(title_number, nested_title) %>%
+  left_join(original_ocod, by  = c("title_number"= "title.number")) %>%
+  pivot_longer(cols = c("country.incorporated..1.","country.incorporated..2.", "country.incorporated..3.", "country.incorporated..4."), values_to = "country_incorporation") %>%
+  filter(!is.na(country_incorporation)) %>%
+  mutate(country_incorporation = ifelse(grepl("U.S.A", country_incorporation), "U.S.A", country_incorporation),
+         country_incorporation = ifelse(grepl("CANADA", country_incorporation), "CANADA", country_incorporation),
+         country_incorporation = ifelse(grepl("BRITISH VIRGIN ISLANDS", country_incorporation), "B.V.I", country_incorporation))  %>%
+  group_by(country_incorporation) %>%
+  summarise(counts = n()) %>%
+  arrange(-counts) %>%
+  ungroup %>%
+  mutate(cumsum = cumsum(counts),
+         perc = counts/sum(counts),
+         cumperc = cumsum/sum(counts),
+         ranking = rank(-counts),
+         alt_labels = ifelse(ranking>20, "other", country_incorporation),
+         type = "all props")
+
+
+ctry_incorp_titles_only <- offshore_df_price %>% 
+  filter(region =="GREATER LONDON",
+         class2 =="domestic") %>%
+  select(title_number) %>%
+  distinct() %>%
+  left_join(original_ocod, by  = c("title_number"= "title.number")) %>%
+  pivot_longer(cols = c("country.incorporated..1.","country.incorporated..2.", "country.incorporated..3.", "country.incorporated..4."), values_to = "country_incorporation") %>%
+  filter(!is.na(country_incorporation)) %>%
+  mutate(country_incorporation = ifelse(grepl("U.S.A", country_incorporation), "U.S.A", country_incorporation),
+         country_incorporation = ifelse(grepl("CANADA", country_incorporation), "CANADA", country_incorporation),
+         country_incorporation = ifelse(grepl("BRITISH VIRGIN ISLANDS", country_incorporation), "B.V.I", country_incorporation)) %>%
+  group_by(country_incorporation) %>%
+  summarise(counts = n()) %>%
+  arrange(-counts) %>%
+  ungroup %>%
+  mutate(cumsum = cumsum(counts),
+         perc = counts/sum(counts),
+         cumperc = cumsum/sum(counts),
+         ranking = rank(-counts),
+         alt_labels = ifelse(ranking>20, "other", country_incorporation),
+         type = "titles only")
+
+
+test <- bind_rows(ctry_incorp, ctry_incorp_titles_only) %>%
+  select(-country_incorporation) %>%
+  group_by(type, alt_labels) %>%
+  summarise(counts = sum(counts)) %>%
+  ungroup %>%
+  arrange(-counts) %>%
+  group_by(type) %>%
+  mutate(cumsum = cumsum(counts),
+         perc = counts/sum(counts),
+         cumperc = cumsum/sum(counts),
+         ranking = rank(-counts))  %>%
+  ungroup %>%
+  arrange(-perc)
+
+  test %>%
+  mutate(country = fct_inorder(alt_labels) %>% fct_relevel(., "other", after = Inf)) %>%
+  ggplot(aes(x = country, y = perc, fill = type)) + geom_col(position = "dodge") +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    labs(title = "Country of incorporation by property and title number counts",
+         y = "percent of total") + scale_y_continuous(labels = scales::percent)
+
+crown_deps <- c("JERSEY", "GUERNSEY", "ISLE OF MAN")
+overseas_terrs <- c("B.V.I", "CAYMAN ISLANDS", "GIBRALTAR", "ANGUILLA", "BERMUDA", "TURKS AND CAICOS ISLANDS")
+
+
+#Crown dependencies
+test %>%
+  filter(alt_labels %in% crown_deps) %>% group_by(type) %>%
+  summarise(perc = sum(perc),
+            counts = sum(counts))
+
+#Overseas territories
+test %>%
+  filter(alt_labels %in% overseas_terrs) %>% group_by(type) %>%
+  summarise(perc = sum(perc),
+            counts = sum(counts))
+
+test %>%
+  filter(alt_labels %in% c(crown_deps, overseas_terrs)) %>% group_by(type) %>%
+  summarise(perc = sum(perc),
+            counts = sum(counts))
+
+
+
+##nested vs not
+
+#write_csv(ctry_incorp , file.path(basewd, "excolony.csv"))
+
+test %>%
+  filter(alt_labels %in% c(crown_deps, overseas_terrs)) %>%
+  arrange(alt_labels)
+
+ex_colony <- c("CYPRUS", "HONG KONG", "BAHAMAS", "SEYCHELLES", "SINGAPORE", "MAURITIUS")
+
+ex_colony_df <- read_csv(file.path(basewd, "excolony.csv")) %>%
+  filter(!is.na(excolony2))
+
+ctry_incorp %>%
+  mutate(type = case_when(
+    country_incorporation %in% overseas_terrs~"BOT",
+    country_incorporation %in% crown_deps~"CD",
+   # country_incorporation %in% ex_colony_df$country_incorporation~"PWW2",
+    TRUE~"Other"
+  ))%>%
+  arrange(-perc) %>%
+  mutate(country = fct_inorder(alt_labels) %>% fct_relevel(., "other", after = Inf))  %>%
+  ggplot(aes(x = country,y = perc, fill = type)) +geom_col() +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+    labs(title = "Country of incorporation by relationship to the UK",
+         y = "percent of total")  + scale_y_continuous(labels = scales::percent)
+
+
+#Fraction of Nested by country of incorporation
+
+offshore_df_price %>%
+  filter(nested_title) %>% 
+  filter(region =="GREATER LONDON",
+         class2 =="domestic") %>%
+    select(title_number) %>%
+  left_join(original_ocod, by  = c("title_number"= "title.number")) %>%
+  pivot_longer(cols = c("country.incorporated..1.","country.incorporated..2.", "country.incorporated..3.", "country.incorporated..4."), values_to = "country_incorporation") %>%
+  filter(!is.na(country_incorporation)) %>%
+  mutate(country_incorporation = ifelse(grepl("U.S.A", country_incorporation), "U.S.A", country_incorporation),
+         country_incorporation = ifelse(grepl("CANADA", country_incorporation), "CANADA", country_incorporation),
+         country_incorporation = ifelse(grepl("BRITISH VIRGIN ISLANDS", country_incorporation), "B.V.I", country_incorporation))  %>%
+  group_by(country_incorporation) %>%
+  summarise(counts = n()) %>%
+  arrange(-counts) %>%
+  ungroup %>%
+  mutate(cumsum = cumsum(counts),
+         perc = counts/sum(counts),
+         cumperc = cumsum/sum(counts),
+         ranking = rank(-counts),
+         alt_labels = ifelse(ranking>20, "other", country_incorporation),
+         type = "all props")
+  
+
+```
+
+
+#counts per class
+```{r}
+offshore_class_counts <- read_csv(file.path(basewd, "enhanced_ocod_dataset.csv")) %>%
+  group_by(class2) %>%
+  summarise(counts = n()) %>%
+  mutate(percentage = round(counts/sum(counts)*100)) %>%
+  rename(class = class2)
+
+  xtable(offshore_class_counts, caption = "Breakdown of property type using type 2 classification",
+         label = "tab:prop_type")
+
+sum(offshore_class_counts$counts)
+```
 
 #Future work
 
