@@ -12,4 +12,5 @@ All the data used in this project is publicly available. Only the London empty h
 
 If you use the data or other parts of this repo please cite
 
-xxx xxx xxx
+
+What's in the laundromat? Mapping and characterising offshore owned domestic property in London	 [arXiv:2207.10931](https://arxiv.org/abs/2207.10931)
